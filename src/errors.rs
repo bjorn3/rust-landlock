@@ -3,11 +3,28 @@ use std::error::Error;
 use std::path::PathBuf;
 use std::{fmt, io};
 
-macro_rules! transparent_error_enum {
+macro_rules! error_source {
+    ($self:ident [$($accum:tt)*]) => {
+        match $self {
+            $($accum)*
+        }
+    };
+    ($self:ident [$($accum:tt)*] #[error(transparent)] $variant:ident($variant_ty:ty), $($rest:tt)*) => {
+        error_source!($self [$($accum)* Self::$variant(err) => Error::source(err),] $($rest)*)
+    };
+    ($self:ident [$($accum:tt)*] #[error(source = None, $($error:tt)+)] $variant:ident($variant_ty:ty), $($rest:tt)*) => {
+        error_source!($self [$($accum)* Self::$variant { $source, .. } => None,] $($rest)*)
+    };
+    ($self:ident [$($accum:tt)*] #[error(source = $source:ident, $($error:tt)+)] $variant:ident($variant_ty:ty), $($rest:tt)*) => {
+        error_source!($self [$($accum)* Self::$variant { $source, .. } => Some($source),] $($rest)*)
+    };
+}
+
+macro_rules! error_enum {
     (
         $(#[$attr:meta])*
         $vis:vis enum $enum_name:ident $(<$($arg:ident $(: $bound:path)?),*>)? {
-            $(#[error(transparent)] $variant:ident($variant_ty:ty),)*
+            $(#[error($($error:tt)+)] $variant:ident($variant_ty:ty),)*
         }
     ) => {
         $(#[$attr])*
@@ -19,9 +36,7 @@ macro_rules! transparent_error_enum {
 
         impl $(<$($arg $(: $bound + fmt::Debug)?),*>)? Error for $enum_name $(<$($arg),*>)? {
             fn source(&self) -> Option<&(dyn Error + 'static)> {
-                match self {
-                    $(Self::$variant(err) => Error::source(err),)*
-                }
+                error_source!(self [] $(#[error($($error)*)] $variant($variant_ty),)*)
             }
         }
 
@@ -36,17 +51,17 @@ macro_rules! transparent_error_enum {
     }
 }
 
-macro_rules! transparent_error_enum_with_into {
+macro_rules! error_enum_with_into {
     (
         $(#[$attr:meta])*
         $vis:vis enum $enum_name:ident {
-            $(#[error($kind:tt)] $variant:ident($variant_ty:ty),)*
+            $(#[error($($kind:tt)+)] $variant:ident($variant_ty:ty),)*
         }
     ) => {
-        transparent_error_enum! {
+        error_enum! {
             $(#[$attr])*
             $vis enum $enum_name {
-                $(#[error($kind)] $variant($variant_ty),)*
+                $(#[error($($kind)+)] $variant($variant_ty),)*
             }
         }
 
@@ -58,7 +73,7 @@ macro_rules! transparent_error_enum_with_into {
     }
 }
 
-transparent_error_enum_with_into! {
+error_enum_with_into! {
     /// Maps to all errors that can be returned by a ruleset action.
     pub enum RulesetError {
         #[error(transparent)]
@@ -82,7 +97,7 @@ fn ruleset_error_breaking_change() {
     ));
 }
 
-transparent_error_enum! {
+error_enum! {
     /// Identifies errors when updating the ruleset's handled access-rights.
     pub enum HandleAccessError<T: Access> {
         #[error(transparent)]
@@ -99,7 +114,7 @@ where
     }
 }
 
-transparent_error_enum! {
+error_enum! {
     pub enum HandleAccessesError {
         #[error(transparent)]
         Fs(HandleAccessError<AccessFs>),
@@ -230,7 +245,7 @@ where
     }
 }
 
-transparent_error_enum! {
+error_enum! {
     /// Identifies errors when adding rules to a ruleset thanks to an iterator returning
     /// Result<Rule, E> items.
     pub enum AddRulesError {
@@ -241,7 +256,7 @@ transparent_error_enum! {
     }
 }
 
-transparent_error_enum! {
+error_enum! {
     pub enum CompatError<T: Access> {
         #[error(transparent)]
         PathBeneath(PathBeneathError),
@@ -426,7 +441,7 @@ impl fmt::Display for PathFdError {
 }
 
 #[cfg(test)]
-transparent_error_enum_with_into! {
+error_enum_with_into! {
     pub(crate) enum TestRulesetError {
         #[error(transparent)]
         Ruleset(RulesetError),
